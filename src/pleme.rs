@@ -5,6 +5,7 @@
 //! inputs and outputs.
 
 use crate::builder::WorkspaceGraphBuilder;
+use crate::composition::{CompositionBuilder, CompositionPlan};
 use crate::types::WorkspaceGraph;
 use iac_forge::ir::IacType;
 
@@ -17,8 +18,8 @@ use iac_forge::ir::IacType;
 /// seph-vpc (reads state-backend outputs)
 ///      |
 /// pleme-dns (independent -- Route53 + Porkbun)
-///      |  |
-/// seph-cluster (reads seph-vpc + pleme-dns outputs)
+///      |  |  \
+/// seph-cluster  nix-builders (reads pleme-dns zone_id)
 ///      |
 /// akeyless-dev-config (reads seph-cluster outputs)
 /// ```
@@ -69,6 +70,38 @@ pub fn pleme_infrastructure_graph() -> WorkspaceGraph {
             "nameservers",
             IacType::List(Box::new(IacType::String)),
             "aws_route53_zone.zone.name_servers",
+        )
+        // -- nix-builders (Nix builder fleet -- depends on pleme-dns zone) --
+        .workspace(
+            "nix-builders",
+            "Nix Builder Fleet",
+            "pangea/nix-builders",
+            "aws",
+        )
+        .input(
+            "nix-builders",
+            "zone_id",
+            IacType::String,
+            "pleme-dns",
+            "zone_id",
+        )
+        .output(
+            "nix-builders",
+            "vpc_id",
+            IacType::String,
+            "aws_vpc.aarch64-vpc.id",
+        )
+        .output(
+            "nix-builders",
+            "nlb_dns",
+            IacType::String,
+            "aws_lb.aarch64-builder-nlb.dns_name",
+        )
+        .output(
+            "nix-builders",
+            "asg_name",
+            IacType::String,
+            "aws_autoscaling_group.aarch64-builder-asg.name",
         )
         // -- seph-vpc (VPC infrastructure) --
         .workspace("seph-vpc", "Seph VPC", "pangea/seph-vpc", "aws")
@@ -162,6 +195,63 @@ pub fn pleme_infrastructure_graph() -> WorkspaceGraph {
             IacType::String,
             "akeyless_gateway.dev.hostname",
         )
+        .build()
+}
+
+/// Composition model for the Nix builder fleet.
+/// Decomposes into 4 logical layers: network -> security -> compute -> dns.
+#[must_use]
+pub fn builder_fleet_composition() -> CompositionPlan {
+    CompositionBuilder::new("nix-builders", "Nix Builder Fleet", "aws")
+        .sub_workspace("network", |ws| {
+            ws.output("vpc_id", IacType::String, "aws_vpc.aarch64-vpc.id")
+                .output(
+                    "subnet_ids",
+                    IacType::List(Box::new(IacType::String)),
+                    "aws_subnet.*.id",
+                )
+        })
+        .sub_workspace("security", |ws| {
+            ws.input_from("network", "vpc_id", IacType::String)
+                .output(
+                    "sg_id",
+                    IacType::String,
+                    "aws_security_group.aarch64-builder-sg.id",
+                )
+                .output(
+                    "instance_profile_arn",
+                    IacType::String,
+                    "aws_iam_instance_profile.aarch64-builder-profile.arn",
+                )
+        })
+        .sub_workspace("compute", |ws| {
+            ws.input_from("network", "vpc_id", IacType::String)
+                .input_from(
+                    "network",
+                    "subnet_ids",
+                    IacType::List(Box::new(IacType::String)),
+                )
+                .input_from("security", "sg_id", IacType::String)
+                .input_from("security", "instance_profile_arn", IacType::String)
+                .output(
+                    "nlb_dns",
+                    IacType::String,
+                    "aws_lb.aarch64-builder-nlb.dns_name",
+                )
+                .output(
+                    "asg_name",
+                    IacType::String,
+                    "aws_autoscaling_group.aarch64-builder-asg.name",
+                )
+        })
+        .sub_workspace("dns", |ws| {
+            ws.input_from("compute", "nlb_dns", IacType::String)
+                .output(
+                    "builder_fqdn",
+                    IacType::String,
+                    "aws_route53_record.aarch64-builder-public-cname.fqdn",
+                )
+        })
         .build()
 }
 

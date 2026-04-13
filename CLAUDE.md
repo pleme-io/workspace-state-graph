@@ -21,7 +21,7 @@ src/
   composition.rs  -- CompositionBuilder, CompositionPlan, ChildProcess, SubWorkspaceBuilder
   verify.rs       -- GraphViolation enum, verify_graph, verify_connectivity, verify_ordering, verify_compatibility, verify_uniqueness
   analysis.rs     -- deployment_order (topological sort), affected_workspaces (transitive closure)
-  pleme.rs        -- pleme_infrastructure_graph(), minimal_graph() (real topology)
+  pleme.rs        -- pleme_infrastructure_graph(), builder_fleet_composition(), minimal_graph() (real topology)
 tests/
   graph_proofs.rs        -- proptest property tests for graph invariants
   pleme_topology.rs      -- real infrastructure graph validation
@@ -112,21 +112,29 @@ Functions:
 
 ## Real pleme-io Topology (`pleme.rs`)
 
-`pleme_infrastructure_graph()` returns the actual 5-workspace dependency graph:
+`pleme_infrastructure_graph()` returns the actual 6-workspace dependency graph:
 
 ```
 state-backend          -- S3 bucket + DynamoDB lock table (no deps)
 pleme-dns              -- Route53 zone (independent)
+nix-builders           -- Nix builder fleet (depends on pleme-dns)
 seph-vpc               -- VPC, subnets, security group (independent)
 seph-cluster           -- K3s cluster (depends on seph-vpc + pleme-dns)
 akeyless-dev-config    -- Akeyless gateway (depends on seph-cluster)
 ```
 
-Edges (4 total):
+Edges (5 total):
+- pleme-dns.zone_id -> nix-builders.zone_id (String)
 - seph-vpc.vpc_id -> seph-cluster.vpc_id (String)
 - seph-vpc.private_subnet_ids -> seph-cluster.subnet_ids (List(String))
 - pleme-dns.zone_id -> seph-cluster.dns_zone_id (String)
 - seph-cluster.cluster_endpoint -> akeyless-dev-config.cluster_endpoint (String)
+
+`builder_fleet_composition()` decomposes nix-builders into 4 sub-workspaces:
+- network -- VPC, subnets
+- security -- security group, IAM instance profile (depends on network)
+- compute -- NLB, ASG (depends on network + security)
+- dns -- Route53 CNAME (depends on compute)
 
 `minimal_graph()` returns a 3-workspace test fixture (vpc + dns + cluster).
 
@@ -153,7 +161,7 @@ state file paths managed by pangea-operator.
 
 ## Testing
 
-56 tests total. Run: `cargo test`
+62 tests total. Run: `cargo test`
 
 Property tests (proptest) use two strategies:
 - `arb_linear_graph` / `arb_linear_composition` -- Linear chain (w0 -> w1 -> ... -> wN)
