@@ -23,9 +23,10 @@ src/
   analysis.rs     -- deployment_order (topological sort), affected_workspaces (transitive closure)
   pleme.rs        -- pleme_infrastructure_graph(), builder_fleet_composition(), minimal_graph() (real topology)
 tests/
-  graph_proofs.rs        -- proptest property tests for graph invariants
-  pleme_topology.rs      -- real infrastructure graph validation
-  composition_proofs.rs  -- 10 numbered composition proofs via proptest
+  graph_proofs.rs              -- proptest property tests for graph invariants
+  pleme_topology.rs            -- real infrastructure graph validation
+  composition_proofs.rs        -- 10 numbered composition proofs via proptest
+  exhaustive_graph_proofs.rs   -- 49 exhaustive proofs: graph properties, composition, topology, serialization, edge cases
 ```
 
 ## Key Types and Relationships
@@ -161,7 +162,7 @@ state file paths managed by pangea-operator.
 
 ## Testing
 
-62 tests total. Run: `cargo test`
+111 tests total. Run: `cargo test`
 
 Property tests (proptest) use two strategies:
 - `arb_linear_graph` / `arb_linear_composition` -- Linear chain (w0 -> w1 -> ... -> wN)
