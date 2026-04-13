@@ -8,6 +8,8 @@
 pub mod analysis;
 /// Fluent graph construction helpers.
 pub mod builder;
+/// Real pleme-io infrastructure topology.
+pub mod pleme;
 /// Core types: workspaces, ports, edges, and the graph.
 pub mod types;
 /// Graph invariant verification.
