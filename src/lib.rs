@@ -8,6 +8,8 @@
 pub mod analysis;
 /// Fluent graph construction helpers.
 pub mod builder;
+/// Workspace composition — architectures that decompose into sub-workspaces.
+pub mod composition;
 /// Real pleme-io infrastructure topology.
 pub mod pleme;
 /// Core types: workspaces, ports, edges, and the graph.
