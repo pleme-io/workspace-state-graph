@@ -255,6 +255,246 @@ pub fn builder_fleet_composition() -> CompositionPlan {
         .build()
 }
 
+/// quero.lol infrastructure graph -- 7 workspaces.
+///
+/// ```text
+/// quero-dns (Route53 + Porkbun delegation)
+///      |   \       \            \
+///      |    quero-builders-aarch64  quero-cache  quero-seph
+///      |    quero-builders-x86                      |
+///      |                                     quero-monitoring
+/// quero-vpc
+///      |    \            \
+///      |    quero-builders-aarch64  quero-seph
+///      |    quero-builders-x86
+/// ```
+#[must_use]
+pub fn quero_infrastructure_graph() -> WorkspaceGraph {
+    WorkspaceGraphBuilder::new()
+        // -- quero-dns (Route53 + Porkbun -- no deps) --
+        .workspace("quero-dns", "quero.lol DNS", "pangea/quero-dns", "aws")
+        .output(
+            "quero-dns",
+            "public_zone_id",
+            IacType::String,
+            "aws_route53_zone.quero-public.zone_id",
+        )
+        .output(
+            "quero-dns",
+            "private_zone_id",
+            IacType::String,
+            "aws_route53_zone.quero-private.zone_id",
+        )
+        .output(
+            "quero-dns",
+            "nameservers",
+            IacType::List(Box::new(IacType::String)),
+            "aws_route53_zone.quero-public.name_servers",
+        )
+        // -- quero-vpc (independent) --
+        .workspace("quero-vpc", "quero VPC", "pangea/quero-vpc", "aws")
+        .output(
+            "quero-vpc",
+            "vpc_id",
+            IacType::String,
+            "aws_vpc.quero.id",
+        )
+        .output(
+            "quero-vpc",
+            "subnet_ids",
+            IacType::List(Box::new(IacType::String)),
+            "aws_subnet.*.id",
+        )
+        // -- quero-builders-aarch64 (depends on vpc + dns) --
+        .workspace(
+            "quero-builders-aarch64",
+            "ARM64 Builders",
+            "pangea/quero-builders-aarch64",
+            "aws",
+        )
+        .input(
+            "quero-builders-aarch64",
+            "vpc_id",
+            IacType::String,
+            "quero-vpc",
+            "vpc_id",
+        )
+        .input(
+            "quero-builders-aarch64",
+            "zone_id",
+            IacType::String,
+            "quero-dns",
+            "public_zone_id",
+        )
+        .output(
+            "quero-builders-aarch64",
+            "nlb_dns",
+            IacType::String,
+            "aws_lb.aarch64-nlb.dns_name",
+        )
+        // -- quero-builders-x86 (depends on vpc + dns) --
+        .workspace(
+            "quero-builders-x86",
+            "x86 Builders",
+            "pangea/quero-builders-x86",
+            "aws",
+        )
+        .input(
+            "quero-builders-x86",
+            "vpc_id",
+            IacType::String,
+            "quero-vpc",
+            "vpc_id",
+        )
+        .input(
+            "quero-builders-x86",
+            "zone_id",
+            IacType::String,
+            "quero-dns",
+            "public_zone_id",
+        )
+        .output(
+            "quero-builders-x86",
+            "nlb_dns",
+            IacType::String,
+            "aws_lb.x86-nlb.dns_name",
+        )
+        // -- quero-cache (depends on dns) --
+        .workspace(
+            "quero-cache",
+            "Nix Binary Cache",
+            "pangea/quero-cache",
+            "aws",
+        )
+        .input(
+            "quero-cache",
+            "zone_id",
+            IacType::String,
+            "quero-dns",
+            "public_zone_id",
+        )
+        .output(
+            "quero-cache",
+            "endpoint",
+            IacType::String,
+            "aws_s3_bucket.cache.bucket_domain_name",
+        )
+        // -- quero-seph (depends on vpc + dns) --
+        .workspace(
+            "quero-seph",
+            "K8s Cluster",
+            "pangea/quero-seph",
+            "aws",
+        )
+        .input(
+            "quero-seph",
+            "vpc_id",
+            IacType::String,
+            "quero-vpc",
+            "vpc_id",
+        )
+        .input(
+            "quero-seph",
+            "subnet_ids",
+            IacType::List(Box::new(IacType::String)),
+            "quero-vpc",
+            "subnet_ids",
+        )
+        .input(
+            "quero-seph",
+            "zone_id",
+            IacType::String,
+            "quero-dns",
+            "public_zone_id",
+        )
+        .output(
+            "quero-seph",
+            "endpoint",
+            IacType::String,
+            "aws_lb.api.dns_name",
+        )
+        // -- quero-monitoring (depends on dns + seph) --
+        .workspace(
+            "quero-monitoring",
+            "Monitoring",
+            "pangea/quero-monitoring",
+            "aws",
+        )
+        .input(
+            "quero-monitoring",
+            "zone_id",
+            IacType::String,
+            "quero-dns",
+            "public_zone_id",
+        )
+        .input(
+            "quero-monitoring",
+            "cluster_endpoint",
+            IacType::String,
+            "quero-seph",
+            "endpoint",
+        )
+        .build()
+}
+
+/// quero.lol platform composition (6 sub-workspaces).
+///
+/// Decomposes the quero.lol platform into sub-workspaces:
+/// dns, vpc, builders-aarch64, builders-x86, cache, seph.
+#[must_use]
+pub fn quero_platform_composition() -> CompositionPlan {
+    CompositionBuilder::new("quero", "quero.lol Platform", "aws")
+        .sub_workspace("dns", |ws| {
+            ws.output(
+                "public_zone_id",
+                IacType::String,
+                "aws_route53_zone.quero-public.zone_id",
+            )
+            .output(
+                "private_zone_id",
+                IacType::String,
+                "aws_route53_zone.quero-private.zone_id",
+            )
+        })
+        .sub_workspace("vpc", |ws| {
+            ws.output("vpc_id", IacType::String, "aws_vpc.quero.id")
+                .output(
+                    "subnet_ids",
+                    IacType::List(Box::new(IacType::String)),
+                    "aws_subnet.*.id",
+                )
+        })
+        .sub_workspace("builders-aarch64", |ws| {
+            ws.input_from("vpc", "vpc_id", IacType::String)
+                .input_from("dns", "public_zone_id", IacType::String)
+                .output("nlb_dns", IacType::String, "aws_lb.aarch64-nlb.dns_name")
+        })
+        .sub_workspace("builders-x86", |ws| {
+            ws.input_from("vpc", "vpc_id", IacType::String)
+                .input_from("dns", "public_zone_id", IacType::String)
+                .output("nlb_dns", IacType::String, "aws_lb.x86-nlb.dns_name")
+        })
+        .sub_workspace("cache", |ws| {
+            ws.input_from("dns", "public_zone_id", IacType::String)
+                .output(
+                    "endpoint",
+                    IacType::String,
+                    "aws_s3_bucket.cache.bucket_domain_name",
+                )
+        })
+        .sub_workspace("seph", |ws| {
+            ws.input_from("vpc", "vpc_id", IacType::String)
+                .input_from(
+                    "vpc",
+                    "subnet_ids",
+                    IacType::List(Box::new(IacType::String)),
+                )
+                .input_from("dns", "public_zone_id", IacType::String)
+                .output("endpoint", IacType::String, "aws_lb.api.dns_name")
+        })
+        .build()
+}
+
 /// Build a minimal graph for testing (just VPC + DNS + cluster).
 #[must_use]
 pub fn minimal_graph() -> WorkspaceGraph {
